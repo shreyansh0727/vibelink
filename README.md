@@ -254,6 +254,16 @@ npm run update:ota -- --notes "Faster retries"
 
 `appBundles` is readable by signed-in users and has no client write rule. `storage.rules` allows anonymous reads under `app-bundles/` because the app's own downloader carries no Firebase credentials; listing, writes, and every other path stay denied.
 
+## App info site
+
+`site/` is a standalone landing page for the app: a 3D phone mockup, a feel playground that replays each built-in rhythm with `navigator.vibrate` (falling back to animated bars where vibration is unavailable), feature and install sections, a **Download APK** button that points at the current release object, and a source section linking the GitHub repository for anyone who wants to build it themselves. It has no build step and no dependencies — plain HTML, CSS, classic scripts and one PNG — so it opens straight from `file://` or any static host.
+
+- `site/release.js` is the only file to touch for a release: `versionName`, `versionCode`, `sizeBytes`, `sha256`, `publishedAt`, `minAndroid` and the Storage `url` (`app-updates/vibelink-<code>.apk`). `site/main.js` paints those values into the page, sets every `a[data-rel="download"]` href, and the hero/nav buttons scroll to the download section instead of starting the download.
+- Motion respects `prefers-reduced-motion`, and pointer tilt is skipped on coarse pointers.
+- The download URL is the public `app-updates` object that `storage.rules` already allows anonymous reads on, so no backend is needed; the SHA-256 is shown (and copyable) for verification against `appUpdates/latest`.
+
+To ship a new version, publish the APK as usual, then update `site/release.js` and redeploy the folder to whichever host serves it.
+
 ## Security model
 
 - The 8-character pair code is the link's **bearer secret**. It is generated from a CSPRNG using a 32-character alphabet (~40 bits), so it cannot be guessed in practice. Share it only with the phones you are linking, and remember that every member can pulse and control every other member.
@@ -454,4 +464,5 @@ android/app/src/main/java/com/vibelink/OtaBundleStore.kt
 android/app/src/main/res/xml/updater_paths.xml
                                 FileProvider paths for downloaded APKs
 firebase.json                   rules + functions deployment config
+site/                           dependency-free app info site (release.js holds the download target)
 ```
