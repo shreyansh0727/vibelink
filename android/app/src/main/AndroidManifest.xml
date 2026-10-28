@@ -1,0 +1,114 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Firebase Messaging declares this for notification display; VibeLink is data-only. -->
+    <uses-permission
+        android:name="android.permission.POST_NOTIFICATIONS"
+        tools:node="remove" />
+
+    <application
+      android:name=".MainApplication"
+      android:label="@string/app_name"
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher_round"
+      android:allowBackup="false"
+      android:theme="@style/AppTheme"
+      android:usesCleartextTraffic="${usesCleartextTraffic}"
+      android:supportsRtl="true">
+      <activity
+        android:name=".MainActivity"
+        android:label="@string/app_name"
+        android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+        android:launchMode="singleTask"
+        android:windowSoftInputMode="adjustResize"
+        android:exported="false" />
+
+      <!-- Privacy mode swaps which alias is enabled: the VibeLink icon or a
+           system-app decoy that opens the phone's own Settings. -->
+      <activity-alias
+        android:name=".LauncherAlias"
+        android:targetActivity=".MainActivity"
+        android:exported="true"
+        android:enabled="true"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+      </activity-alias>
+
+      <activity-alias
+        android:name=".SystemAlias"
+        android:targetActivity=".DecoyActivity"
+        android:exported="true"
+        android:enabled="false"
+        android:label="@string/system_alias_label"
+        android:icon="@mipmap/ic_system_alias"
+        android:roundIcon="@mipmap/ic_system_alias_round">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+      </activity-alias>
+
+      <activity
+        android:name=".DecoyActivity"
+        android:exported="true"
+        android:excludeFromRecents="true"
+        android:noHistory="true"
+        android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+      <service
+        android:name=".DeliveryTileService"
+        android:exported="true"
+        android:icon="@drawable/ic_tile_vibelink"
+        android:label="VibeLink delivery"
+        android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+        <intent-filter>
+          <action android:name="android.service.quicksettings.action.QS_TILE" />
+        </intent-filter>
+        <meta-data
+          android:name="android.service.quicksettings.TOGGLEABLE_TILE"
+          android:value="true" />
+      </service>
+
+      <service
+        android:name=".RevealTileService"
+        android:exported="true"
+        android:icon="@drawable/ic_tile_vibelink"
+        android:label="VibeLink app"
+        android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+        <intent-filter>
+          <action android:name="android.service.quicksettings.action.QS_TILE" />
+        </intent-filter>
+      </service>
+
+      <receiver
+        android:name=".SecretCodeReceiver"
+        android:exported="true">
+        <intent-filter>
+          <action android:name="android.provider.Telephony.SECRET_CODE" />
+          <data
+            android:scheme="android_secret_code"
+            android:host="4263" />
+        </intent-filter>
+      </receiver>
+
+      <!-- Hands the downloaded APK to the system installer. -->
+      <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.updates"
+        android:exported="false"
+        android:grantUriPermissions="true">
+        <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/updater_paths" />
+      </provider>
+    </application>
+</manifest>

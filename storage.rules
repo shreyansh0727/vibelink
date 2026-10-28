@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Published APKs are meant to be downloadable by the updater's
+    // DownloadManager request, which carries no Firebase credentials.
+    // Listing stays denied and nothing else in the bucket is readable.
+    match /app-updates/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
