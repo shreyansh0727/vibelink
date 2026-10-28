@@ -23,6 +23,20 @@ export const BUILT_IN_PATTERNS: Record<BuiltInPatternId, PatternDefinition> = {
     timings: [0, 130, 110, 130],
     amplitudes: [0, 200, 0, 200],
   },
+  snap: {
+    id: 'snap',
+    label: 'Snap',
+    description: 'A single razor-sharp pop',
+    timings: [0, 45],
+    amplitudes: [0, 255],
+  },
+  knock: {
+    id: 'knock',
+    label: 'Knock',
+    description: 'Two firm knocks, the second softer',
+    timings: [0, 70, 105, 55],
+    amplitudes: [0, 255, 0, 190],
+  },
   wave: {
     id: 'wave',
     label: 'Wave',
@@ -37,12 +51,53 @@ export const BUILT_IN_PATTERNS: Record<BuiltInPatternId, PatternDefinition> = {
     timings: [0, 90, 120, 140, 620, 90, 120, 140],
     amplitudes: [0, 140, 0, 235, 0, 140, 0, 235],
   },
+  pendulum: {
+    id: 'pendulum',
+    label: 'Pendulum',
+    description: 'A heavy swing between strong and soft',
+    timings: [0, 180, 80, 110, 80, 180, 80, 110],
+    amplitudes: [0, 255, 0, 95, 0, 255, 0, 95],
+  },
   ripple: {
     id: 'ripple',
     label: 'Ripple',
     description: 'A pulse that fades away',
     timings: [0, 60, 60, 70, 70, 80, 80, 90, 90, 100],
     amplitudes: [0, 255, 0, 210, 0, 165, 0, 120, 0, 75],
+  },
+  crescendo: {
+    id: 'crescendo',
+    label: 'Crescendo',
+    description: 'Five pulses that build to full power',
+    timings: [0, 70, 55, 85, 55, 100, 55, 120, 55, 140],
+    amplitudes: [0, 60, 0, 105, 0, 150, 0, 195, 0, 240],
+  },
+  rain: {
+    id: 'rain',
+    label: 'Rain',
+    description: 'Scattered droplets with uneven spacing',
+    timings: [0, 50, 130, 40, 240, 65, 85, 45, 300, 55, 60, 40],
+    amplitudes: [0, 140, 0, 90, 0, 180, 0, 110, 0, 160, 0, 95],
+  },
+  sonar: {
+    id: 'sonar',
+    label: 'Sonar',
+    description: 'One strong ping, then fading echoes',
+    timings: [0, 80, 170, 55, 300, 35],
+    amplitudes: [0, 255, 0, 165, 0, 95],
+  },
+  shiver: {
+    id: 'shiver',
+    label: 'Shiver',
+    description: 'A tight, fast tremble',
+    timings: [
+      0, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35, 35,
+      35, 35, 35, 35, 35, 35,
+    ],
+    amplitudes: [
+      0, 110, 0, 90, 0, 130, 0, 95, 0, 120, 0, 85, 0, 115, 0, 100, 0, 125, 0,
+      90, 0, 115, 0, 105,
+    ],
   },
   sos: {
     id: 'sos',
@@ -68,9 +123,16 @@ export const BUILT_IN_PATTERNS: Record<BuiltInPatternId, PatternDefinition> = {
 export const BUILT_IN_KEYS: BuiltInPatternId[] = [
   'tap',
   'double',
+  'knock',
+  'snap',
   'wave',
   'heartbeat',
+  'pendulum',
+  'sonar',
   'ripple',
+  'crescendo',
+  'rain',
+  'shiver',
   'sos',
   'long',
 ];
@@ -134,33 +196,54 @@ export function sanitizeAmplitudes(
   return amplitudes;
 }
 
-export function buildCustomTimings(
-  pulses: number,
-  pulseMs: number,
-  gapMs: number,
-): { timings: number[]; amplitudes: number[] } {
-  const count = Math.max(1, Math.min(8, Math.round(pulses)));
-  const on = Math.max(40, Math.min(600, Math.round(pulseMs)));
-  const off = Math.max(30, Math.min(800, Math.round(gapMs)));
+export type RhythmStep = {
+  lengthMs: number;
+  gapMs: number;
+  strength: number;
+};
+
+export const MAX_RHYTHM_STEPS = 8;
+export const MAX_RHYTHM_REPEAT = 3;
+export const MIN_RHYTHM_PULSE_MS = 40;
+export const MAX_RHYTHM_PULSE_MS = 600;
+export const MIN_RHYTHM_GAP_MS = 30;
+export const MAX_RHYTHM_GAP_MS = 800;
+
+function clampMs(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+export function buildRhythm(
+  steps: RhythmStep[],
+  repeat: number,
+): { timings: number[]; amplitudes: number[] } | null {
+  if (steps.length === 0 || steps.length > MAX_RHYTHM_STEPS) {
+    return null;
+  }
+  const passes = Math.max(1, Math.min(MAX_RHYTHM_REPEAT, Math.round(repeat)));
+  const pulses = steps.length * passes;
+  // Each pulse contributes an "on" segment and, except for the last, an "off".
+  if (pulses * 2 > MAX_PATTERN_STEPS) {
+    return null;
+  }
   const timings: number[] = [0];
   const amplitudes: number[] = [0];
-  for (let index = 0; index < count; index += 1) {
-    timings.push(on);
-    amplitudes.push(255);
-    if (index < count - 1) {
-      timings.push(off);
-      amplitudes.push(0);
+  let played = 0;
+  for (let pass = 0; pass < passes; pass += 1) {
+    for (const step of steps) {
+      timings.push(
+        clampMs(step.lengthMs, MIN_RHYTHM_PULSE_MS, MAX_RHYTHM_PULSE_MS),
+      );
+      amplitudes.push(clampMs(step.strength, 0, 255));
+      played += 1;
+      if (played < pulses) {
+        timings.push(clampMs(step.gapMs, MIN_RHYTHM_GAP_MS, MAX_RHYTHM_GAP_MS));
+        amplitudes.push(0);
+      }
     }
   }
   return { timings, amplitudes };
-}
-
-export function scaledAmplitudes(
-  amplitudes: number[],
-  strength: number,
-): number[] {
-  const factor = Math.max(0.1, Math.min(1, strength));
-  return amplitudes.map(value =>
-    value === 0 ? 0 : Math.round(value * factor),
-  );
 }

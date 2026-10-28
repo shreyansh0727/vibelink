@@ -154,7 +154,7 @@ function Root() {
   } else if (
     pairing.status === 'linked' &&
     pairing.pairId &&
-    pairing.partner
+    pairing.peers.length > 0
   ) {
     content = (
       <ControllerScreen
@@ -162,7 +162,7 @@ function Root() {
         onOpenHaptics={() => openHaptics('main')}
         onOpenSettings={() => setRoute('settings')}
         pairId={pairing.pairId}
-        partner={pairing.partner}
+        peers={pairing.peers}
         selfName={DEVICE_NAME}
         uid={auth.uid}
       />

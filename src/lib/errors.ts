@@ -123,6 +123,34 @@ export function describeUpdateError(error: unknown): string {
   return `The update check failed.${code ? ` (${code})` : ''}`;
 }
 
+export function describeOtaError(error: unknown): string {
+  const code = errorCode(error);
+
+  if (code === 'ota_checksum_failed') {
+    return 'The downloaded JS bundle did not match the published checksum, so it was deleted. Try again.';
+  }
+  if (code === 'ota_download_failed') {
+    const detail = errorMessage(error);
+    return detail
+      ? `The JS bundle could not be downloaded. ${detail}`
+      : 'The JS bundle could not be downloaded. Check your connection and try again.';
+  }
+  if (code === 'ota_missing_bundle') {
+    return 'The downloaded JS bundle is no longer on this phone. Download it again.';
+  }
+  if (code === 'ota_bad_url' || code === 'ota_bad_checksum' || code === 'ota_bad_id') {
+    return 'The published JS bundle metadata is not valid. Republish the bundle.';
+  }
+  if (isPermissionDenied(error)) {
+    return 'Firebase rejected the JS bundle check. Deploy database.rules.json, then try again.';
+  }
+  if (isNetworkError(error)) {
+    return 'The JS bundle server could not be reached. Check your internet connection and try again.';
+  }
+
+  return `The JS bundle update failed.${code ? ` (${code})` : ''}`;
+}
+
 function messageIncludes(error: unknown, text: string): boolean {
   return errorMessage(error).toLowerCase().includes(text);
 }

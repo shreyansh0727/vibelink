@@ -11,20 +11,32 @@ import {
 import App from './App';
 import { recordDelivery } from './src/lib/deliveryReceipt';
 import { vibrateBuzz } from './src/lib/haptics';
+import { confirmOtaLoaded } from './src/lib/ota';
 import { isDeliveryPaused } from './src/lib/privacy';
+import { applyTorchCommand, flashWithPulse } from './src/lib/torch';
 import { name as appName } from './app.json';
+
+// Reaching this point means a downloaded JS bundle evaluated cleanly, which
+// clears its launch guard in the native OTA store.
+confirmOtaLoaded();
 
 // Foreground pulses are handled in useIncomingPulse; this runs when the app is
 // backgrounded or terminated.
 setBackgroundMessageHandler(getMessaging(), async remoteMessage => {
-  if (remoteMessage.data?.type !== 'buzz') {
+  const data = remoteMessage.data;
+  if (data?.type === 'torch') {
+    await applyTorchCommand(data.torch);
+    return;
+  }
+  if (data?.type !== 'buzz') {
     return;
   }
   if (await isDeliveryPaused()) {
     return;
   }
-  vibrateBuzz(remoteMessage.data);
-  await recordDelivery(remoteMessage.data.triggerId);
+  vibrateBuzz(data);
+  flashWithPulse(data).catch(() => {});
+  await recordDelivery(data.triggerId);
 });
 
 AppRegistry.registerComponent(appName, () => App);

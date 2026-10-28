@@ -7,7 +7,9 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "update:app": "node scripts/update-app.mjs",
+    "update:ota": "node scripts/update-ota.mjs"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",

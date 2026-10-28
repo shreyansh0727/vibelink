@@ -119,7 +119,7 @@ export function WaitingScreen({
   const confirmLeave = () => {
     Alert.alert(
       'Cancel this pairing?',
-      'This phone will stop waiting for a partner.',
+      'This phone will stop waiting for other phones.',
       [
         { text: 'Keep waiting', style: 'cancel' },
         {
@@ -158,11 +158,11 @@ export function WaitingScreen({
           <StatusPill label="Waiting" tone="waiting" />
         </View>
         <Text style={styles.title}>
-          Now let the{'\n'}other phone in.
+          Now let the{'\n'}other phones in.
         </Text>
         <Text style={styles.body}>
-          On the other Android phone, open VibeLink and tap “I have a code.”
-          Enter the code below.
+          On each Android phone, open VibeLink and tap “I have a code.” Enter
+          the code below. Up to eight phones can share one link.
         </Text>
       </View>
 
@@ -173,10 +173,10 @@ export function WaitingScreen({
       <View style={styles.waitingCard}>
         <WaitingRadar />
         <View style={styles.waitingCopy}>
-          <Text style={styles.waitingTitle}>Listening for a second phone</Text>
+          <Text style={styles.waitingTitle}>Listening for linked phones</Text>
           <Text style={styles.waitingBody}>
             Keep this screen open for a moment. You’ll move ahead automatically
-            when it joins.
+            when a phone joins.
           </Text>
         </View>
       </View>
@@ -209,7 +209,7 @@ export function WaitingScreen({
 
       <View style={styles.footer}>
         <Text style={styles.footnote}>
-          THE CODE IS THE KEY · SHARE IT ONLY WITH YOUR PARTNER
+          THE CODE IS THE KEY · SHARE IT ONLY WITH TRUSTED PHONES
         </Text>
         <Text style={styles.deviceLine}>THIS PHONE · {deviceName}</Text>
       </View>

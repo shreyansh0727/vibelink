@@ -1,12 +1,15 @@
 import React from 'react';
 import { Pressable, StyleSheet, Switch, View } from 'react-native';
 import { Header } from './Brand';
+import { BundleCard } from './BundleCard';
 import { SecondaryButton, TextButton } from './Buttons';
 import { Screen } from './Screen';
 import { UpdateCard } from './UpdateCard';
 import { Text } from '../ui/Text';
 import { RoundButton } from '../ui/RoundButton';
 import type { AppUpdate } from '../hooks/useAppUpdate';
+import { useOtaUpdate } from '../hooks/useOtaUpdate';
+import { useFlash } from '../hooks/useFlash';
 import { usePrivacy } from '../hooks/usePrivacy';
 import {
   PALETTE_OPTIONS,
@@ -144,6 +147,8 @@ export function SettingsScreen({
   const { settings, updateSettings, resetSettings } = useTheme();
   const { styles: localStyles, colors } = useThemedStyles(makeStyles);
   const privacy = usePrivacy();
+  const flash = useFlash();
+  const bundle = useOtaUpdate(update.installed);
 
   return (
     <Screen>
@@ -287,6 +292,47 @@ export function SettingsScreen({
       </View>
 
       <View style={localStyles.section}>
+        <SectionTitle>FLASHLIGHT</SectionTitle>
+        <View style={localStyles.card}>
+          {flash.loading ? (
+            <Text style={localStyles.switchDescription}>
+              Checking the flashlight…
+            </Text>
+          ) : !flash.available ? (
+            <Text style={localStyles.switchDescription}>
+              This phone has no flashlight to sync or switch.
+            </Text>
+          ) : (
+            <>
+              <SettingSwitch
+                description="Flashes this phone's torch in time with each incoming pulse. Turn it off to keep pulses dark."
+                label="Flash with pulses"
+                onValueChange={next => {
+                  flash.toggle(next).catch(() => {});
+                }}
+                value={flash.flashEnabled}
+              />
+              {!flash.permission ? (
+                <View style={localStyles.statusBlock}>
+                  <Text style={localStyles.switchDescription}>
+                    Camera access is off. VibeLink uses the camera only to
+                    switch the torch — synced flashes and remote flashlight
+                    requests need it.
+                  </Text>
+                  <SecondaryButton
+                    label="Allow flashlight access"
+                    onPress={() => {
+                      flash.requestAccess().catch(() => {});
+                    }}
+                  />
+                </View>
+              ) : null}
+            </>
+          )}
+        </View>
+      </View>
+
+      <View style={localStyles.section}>
         <SectionTitle>PRIVACY</SectionTitle>
         {privacy.available ? (
           <View style={localStyles.card}>
@@ -355,6 +401,7 @@ export function SettingsScreen({
       <View style={localStyles.section}>
         <SectionTitle>APP</SectionTitle>
         <UpdateCard update={update} />
+        <BundleCard bundle={bundle} />
       </View>
 
       <View style={localStyles.footer}>

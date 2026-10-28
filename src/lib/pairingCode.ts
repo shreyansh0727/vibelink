@@ -1,5 +1,9 @@
 export const PAIR_CODE_LENGTH = 8;
 
+// Enforced by the app before joining; Realtime Database rules cannot count
+// children, so the cap is not expressible there.
+export const MAX_PAIR_MEMBERS = 8;
+
 // Ambiguous characters are intentionally omitted.
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 

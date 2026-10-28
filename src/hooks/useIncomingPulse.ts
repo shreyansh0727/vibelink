@@ -4,6 +4,7 @@ import { recordDelivery } from '../lib/deliveryReceipt';
 import { vibrateBuzz } from '../lib/haptics';
 import { patternFor } from '../lib/patterns';
 import { isDeliveryPaused } from '../lib/privacy';
+import { applyTorchCommand, flashWithPulse } from '../lib/torch';
 import type { IncomingPulse } from '../types';
 
 const BANNER_LIFETIME_MS = 4200;
@@ -17,6 +18,10 @@ export function useIncomingPulse(): IncomingPulse | null {
     try {
       unsubscribe = onMessage(getMessaging(), async message => {
         const data = message.data;
+        if (data?.type === 'torch') {
+          applyTorchCommand(data.torch).catch(() => {});
+          return;
+        }
         if (data?.type !== 'buzz') {
           return;
         }
@@ -25,11 +30,15 @@ export function useIncomingPulse(): IncomingPulse | null {
         }
 
         vibrateBuzz(data);
+        flashWithPulse(data).catch(() => {});
         recordDelivery(data.triggerId).catch(() => {});
         const pattern =
           typeof data.pattern === 'string' ? data.pattern : 'tap';
-        const label =
-          typeof data.label === 'string' && data.label.trim()
+        const meaning =
+          typeof data.meaning === 'string' ? data.meaning.trim() : '';
+        const label = meaning
+          ? meaning.slice(0, 32)
+          : typeof data.label === 'string' && data.label.trim()
             ? data.label.trim()
             : patternFor(pattern).label;
 

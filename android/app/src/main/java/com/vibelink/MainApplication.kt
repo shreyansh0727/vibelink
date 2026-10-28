@@ -18,7 +18,12 @@ class MainApplication : Application(), ReactApplication {
           add(VibeLinkBatteryPackage())
           add(VibeLinkPrivacyPackage())
           add(VibeLinkUpdaterPackage())
+          add(VibeLinkTorchPackage())
+          add(VibeLinkOtaPackage())
         },
+      // Null loads the bundle embedded in the APK; a verified download is
+      // chosen here before React starts so the new JS can take over.
+      jsBundleFilePath = OtaBundleStore.prepareLaunch(applicationContext),
     )
   }
 

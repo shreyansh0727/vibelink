@@ -8,6 +8,14 @@ service firebase.storage {
       allow read: if true;
       allow write: if false;
     }
+    // JS bundles are fetched by the app's own HTTPS downloader, which also
+    // carries no Firebase credentials. The metadata that points at them lives
+    // in Realtime Database behind auth, and every download is checked against
+    // its published SHA-256 before it can be activated.
+    match /app-bundles/{bundleId}/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
     match /{allPaths=**} {
       allow read, write: if false;
     }

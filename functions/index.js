@@ -11,9 +11,16 @@ initializeApp();
 const ALLOWED_PATTERNS = new Set([
   "tap",
   "double",
+  "snap",
+  "knock",
   "wave",
   "heartbeat",
+  "pendulum",
   "ripple",
+  "crescendo",
+  "rain",
+  "sonar",
+  "shiver",
   "sos",
   "long",
   "custom",
@@ -21,6 +28,7 @@ const ALLOWED_PATTERNS = new Set([
 const MAX_TIMINGS = 41;
 const MAX_TIMING_MS = 10_000;
 const MAX_PATTERN_TOTAL_MS = 30_000;
+const MAX_MEANING_LENGTH = 32;
 const DEAD_TOKEN_CODES = new Set([
   "messaging/invalid-registration-token",
   "messaging/registration-token-not-registered",
@@ -37,8 +45,6 @@ exports.relayPulse = onValueCreated(
     const triggerRef = database.ref(
       `pairs/${pairId}/triggers/${triggerId}`,
     );
-    let recipientUid = null;
-    let recipientToken = null;
 
     try {
       const trigger = event.data.val();
@@ -60,24 +66,12 @@ exports.relayPulse = onValueCreated(
         return;
       }
 
-      recipientUid = Object.keys(members).find(
+      const recipients = Object.keys(members).filter(
         uid => uid !== trigger.from,
       );
-      if (!recipientUid) {
+      if (recipients.length === 0) {
         logger.info("Pulse skipped because the pair has no other phone.", {
           pairId,
-        });
-        return;
-      }
-
-      const tokenSnapshot = await database
-        .ref(`notificationTokens/${recipientUid}/token`)
-        .once("value");
-      recipientToken = tokenSnapshot.val();
-      if (!recipientToken || typeof recipientToken !== "string") {
-        logger.warn("Pulse skipped because the recipient has no FCM token.", {
-          pairId,
-          recipient: recipientUid,
         });
         return;
       }
@@ -92,6 +86,14 @@ exports.relayPulse = onValueCreated(
         triggerId,
         fromName: String(trigger.fromName || "Your other phone").slice(0, 64),
       };
+
+      const meaning =
+        typeof trigger.meaning === "string"
+          ? trigger.meaning.trim().slice(0, MAX_MEANING_LENGTH)
+          : "";
+      if (meaning) {
+        data.meaning = meaning;
+      }
 
       if (pattern === "custom") {
         const timings = sanitizeTimings(trigger.timings);
@@ -114,19 +116,13 @@ exports.relayPulse = onValueCreated(
         }
       }
 
-      await getMessaging().send({
-        token: recipientToken,
-        data,
-        android: {
-          priority: "high",
-          ttl: 60 * 1000,
-        },
-      });
+      const delivered = await sendToMembers(database, recipients, data);
 
       logger.info("Silent pulse delivered to FCM.", {
         pairId,
         triggerId,
-        recipient: recipientUid,
+        recipients: delivered,
+        phones: recipients.length,
         pattern,
         custom: Boolean(data.timings),
       });
@@ -137,14 +133,6 @@ exports.relayPulse = onValueCreated(
         code: error?.code,
         message: error?.message,
       });
-
-      if (
-        recipientUid &&
-        recipientToken &&
-        DEAD_TOKEN_CODES.has(error?.code)
-      ) {
-        await removeDeadToken(database, recipientUid, recipientToken);
-      }
     } finally {
       await triggerRef.remove().catch(error => {
         logger.warn("Could not remove a processed trigger.", {
@@ -156,6 +144,119 @@ exports.relayPulse = onValueCreated(
     }
   },
 );
+
+exports.relayControl = onValueCreated(
+  {
+    ref: "/pairs/{pairId}/controls/{commandId}",
+    region: "us-central1",
+  },
+  async event => {
+    const { pairId, commandId } = event.params;
+    const database = getDatabase();
+    const commandRef = database.ref(
+      `pairs/${pairId}/controls/${commandId}`,
+    );
+
+    try {
+      const command = event.data.val();
+      if (
+        !command ||
+        typeof command.from !== "string" ||
+        command.kind !== "torch" ||
+        typeof command.torch !== "boolean"
+      ) {
+        logger.warn("Discarded a malformed control command.", { pairId });
+        return;
+      }
+
+      const membersSnapshot = await database
+        .ref(`pairs/${pairId}/members`)
+        .once("value");
+      const members = membersSnapshot.val() || {};
+      if (!members[command.from]) {
+        logger.warn("Discarded a control command from a non-member.", {
+          pairId,
+          sender: command.from,
+        });
+        return;
+      }
+
+      const recipients = Object.keys(members).filter(
+        uid => uid !== command.from,
+      );
+      const data = {
+        type: "torch",
+        torch: command.torch ? "on" : "off",
+        fromName: String(command.fromName || "A linked phone").slice(0, 64),
+      };
+
+      const delivered = await sendToMembers(database, recipients, data);
+
+      logger.info("Flashlight command relayed.", {
+        pairId,
+        commandId,
+        on: command.torch,
+        recipients: delivered,
+        phones: recipients.length,
+      });
+    } catch (error) {
+      logger.error("Control relay failed.", {
+        pairId,
+        commandId,
+        code: error?.code,
+        message: error?.message,
+      });
+    } finally {
+      await commandRef.remove().catch(error => {
+        logger.warn("Could not remove a processed control command.", {
+          pairId,
+          commandId,
+          message: error?.message,
+        });
+      });
+    }
+  },
+);
+
+async function sendToMembers(database, recipients, data) {
+  let delivered = 0;
+
+  await Promise.all(
+    recipients.map(async uid => {
+      const tokenSnapshot = await database
+        .ref(`notificationTokens/${uid}/token`)
+        .once("value");
+      const token = tokenSnapshot.val();
+      if (!token || typeof token !== "string") {
+        logger.warn("Skipped a phone with no FCM token.", { recipient: uid });
+        return;
+      }
+
+      try {
+        await getMessaging().send({
+          token,
+          data,
+          android: {
+            priority: "high",
+            ttl: 60 * 1000,
+          },
+        });
+        delivered += 1;
+      } catch (error) {
+        logger.warn("Could not deliver to a linked phone.", {
+          recipient: uid,
+          code: error?.code,
+          message: error?.message,
+        });
+        if (DEAD_TOKEN_CODES.has(error?.code)) {
+          await removeDeadToken(database, uid, token);
+        }
+      }
+    }),
+  );
+
+  return delivered;
+}
 
 function sanitizeTimings(value) {
   if (!Array.isArray(value) || value.length < 2 || value.length > MAX_TIMINGS) {

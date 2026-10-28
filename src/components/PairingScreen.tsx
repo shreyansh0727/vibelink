@@ -122,8 +122,8 @@ export function PairingScreen({
             Enter the{'\n'}pairing code.
           </Text>
           <Text style={styles.body}>
-            Find the eight-character code on the other phone. The code only
-            works while that screen is waiting.
+            Find the eight-character code on a linked phone. The code only
+            works while that phone is waiting.
           </Text>
         </View>
 
@@ -217,8 +217,8 @@ export function PairingScreen({
         <Text style={styles.eyebrow}>PRIVATE REMOTE HAPTICS</Text>
         <Text style={styles.display}>A quiet tap,{'\n'}from anywhere.</Text>
         <Text style={styles.body}>
-          Pair two Android phones, then send a pulse the other phone can feel.
-          No notification. No banner. Just a tap on the shoulder.
+          Pair up to eight Android phones, then send a pulse every linked phone
+          can feel. No notification. No banner. Just a tap on the shoulder.
         </Text>
       </View>
 
@@ -254,7 +254,7 @@ export function PairingScreen({
 
       <View style={styles.footer}>
         <Text style={styles.footnote}>
-          TWO PHONES · ONE PAIR · ZERO BANNERS
+          UP TO 8 PHONES · ONE LINK · ZERO BANNERS
         </Text>
         <Text style={styles.deviceLine}>THIS PHONE · {deviceName}</Text>
       </View>

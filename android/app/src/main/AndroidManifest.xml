@@ -5,6 +5,14 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Only used to switch the flashlight on and off; nothing is captured. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.flash"
+        android:required="false" />
     <!-- Firebase Messaging declares this for notification display; VibeLink is data-only. -->
     <uses-permission
         android:name="android.permission.POST_NOTIFICATIONS"

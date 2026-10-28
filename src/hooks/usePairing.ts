@@ -16,6 +16,7 @@ import {
   isPermissionDenied,
 } from '../lib/errors';
 import {
+  MAX_PAIR_MEMBERS,
   generatePairCode,
   isValidPairCode,
   normalizePairCode,
@@ -24,33 +25,6 @@ import type { PairData, PairMember } from '../types';
 
 const PAIR_STORAGE_KEY = '@vibelink/pair';
 const PAIR_LOAD_TIMEOUT_MS = 12_000;
-const SEAT_IDS = ['a', 'b'] as const;
-
-type SeatId = (typeof SEAT_IDS)[number];
-type Database = ReturnType<typeof getDatabase>;
-
-function seatRef(database: Database, pairId: string, seat: SeatId) {
-  return ref(database, `pairs/${pairId}/seats/${seat}`);
-}
-
-async function reserveSeat(
-  database: Database,
-  pairId: string,
-  uid: string,
-): Promise<SeatId | null> {
-  for (const seat of SEAT_IDS) {
-    try {
-      await set(seatRef(database, pairId, seat), uid);
-      return seat;
-    } catch (error) {
-      if (isPermissionDenied(error)) {
-        continue;
-      }
-      throw error;
-    }
-  }
-  return null;
-}
 
 export type PairingStatus =
   | 'restoring'
@@ -255,14 +229,13 @@ export function usePairing(
 
   const myMember = uid && pair ? pair.members[uid] : null;
   const hasMembership = Boolean(myMember);
-  const partner = useMemo(() => {
+  const peers = useMemo(() => {
     if (!uid || !pair) {
-      return null;
+      return [] as PairMember[];
     }
-    const entry = Object.entries(pair.members).find(
-      ([memberUid]) => memberUid !== uid,
-    );
-    return entry ? entry[1] : null;
+    return Object.values(pair.members)
+      .filter(member => member.uid !== uid)
+      .sort((left, right) => left.joinedAt - right.joinedAt);
   }, [pair, uid]);
 
   useEffect(() => {
@@ -347,26 +320,9 @@ export function usePairing(
         );
       }
 
-      let seat: SeatId | null;
-      try {
-        seat = await reserveSeat(database, code, uid);
-      } catch (error) {
-        throw operationError(
-          error,
-          'A pairing code could not be created. Try again.',
-          'Firebase blocked pairing. Deploy database.rules.json, then try again.',
-        );
-      }
-
-      if (!seat) {
-        continue;
-      }
-
-      const claimedSeat = seat;
       try {
         await set(ref(database, `pairs/${code}/members/${uid}`), member);
       } catch (error) {
-        await remove(seatRef(database, code, claimedSeat)).catch(() => {});
         throw operationError(
           error,
           'Your device could not join the new pair. Try again.',
@@ -416,6 +372,23 @@ export function usePairing(
         );
       }
 
+      let memberSnapshot;
+      try {
+        memberSnapshot = await get(ref(database, `pairs/${code}/members`));
+      } catch (error) {
+        throw operationError(
+          error,
+          'The pair could not be reached. Try again.',
+          'Firebase blocked the lookup. Deploy database.rules.json, then try again.',
+        );
+      }
+
+      if (Object.keys(memberSnapshot.val() ?? {}).length >= MAX_PAIR_MEMBERS) {
+        throw new Error(
+          `This pair already has ${MAX_PAIR_MEMBERS} phones. Ask someone to unlink one first.`,
+        );
+      }
+
       const member: PairMember = {
         uid,
         name: deviceName,
@@ -425,32 +398,13 @@ export function usePairing(
         lastSeen: Date.now(),
       };
 
-      let seat: SeatId | null;
-      try {
-        seat = await reserveSeat(database, code, uid);
-      } catch (error) {
-        throw operationError(
-          error,
-          'This phone could not join that pair. Try again.',
-          'Firebase blocked pairing. Deploy database.rules.json, then try again.',
-        );
-      }
-
-      if (!seat) {
-        throw new Error(
-          'That pair already has two phones. Ask for a new code.',
-        );
-      }
-
-      const claimedSeat = seat;
       try {
         await set(ref(database, `pairs/${code}/members/${uid}`), member);
       } catch (error) {
-        await remove(seatRef(database, code, claimedSeat)).catch(() => {});
         throw operationError(
           error,
-          'This phone could not join that pair. Try again.',
-          'This pair has two phones or Firebase rules have not been deployed.',
+          `This phone could not join that pair. It may already have ${MAX_PAIR_MEMBERS} phones.`,
+          'This pair is full, or Firebase rules have not been deployed.',
         );
       }
 
@@ -473,11 +427,6 @@ export function usePairing(
     try {
       await onDisconnect(memberRef).cancel().catch(() => {});
       await remove(memberRef);
-      await Promise.all(
-        SEAT_IDS.map(seat =>
-          remove(seatRef(database, pairId, seat)).catch(() => {}),
-        ),
-      );
     } catch (error) {
       throw operationError(
         error,
@@ -507,7 +456,7 @@ export function usePairing(
     status = 'unpaired';
   } else if (!pair) {
     status = 'restoring';
-  } else if (partner) {
+  } else if (peers.length > 0) {
     status = 'linked';
   } else {
     status = 'waiting';
@@ -518,7 +467,7 @@ export function usePairing(
     pairId,
     pair,
     myMember,
-    partner,
+    peers,
     error: loadError,
     createPair,
     joinPair,

@@ -2,11 +2,11 @@ import {
   BUILT_IN_KEYS,
   BUILT_IN_PATTERNS,
   DEFAULT_BUZZ_PATTERN,
-  buildCustomTimings,
+  MAX_RHYTHM_STEPS,
+  buildRhythm,
   isBuiltInPattern,
   patternTimings,
   sanitizeTimings,
-  scaledAmplitudes,
   toBuzzPattern,
 } from '../src/lib/patterns';
 
@@ -25,9 +25,31 @@ describe('buzz patterns', () => {
   });
 
   it('includes the expanded built-in catalog', () => {
-    expect(BUILT_IN_KEYS).toHaveLength(7);
+    expect(BUILT_IN_KEYS).toHaveLength(14);
     expect(BUILT_IN_PATTERNS.heartbeat.label).toBe('Heartbeat');
     expect(BUILT_IN_PATTERNS.sos.timings.length).toBeGreaterThan(10);
+    expect(BUILT_IN_PATTERNS.snap.timings).toEqual([0, 45]);
+    expect(BUILT_IN_PATTERNS.crescendo.amplitudes).toEqual([
+      0, 60, 0, 105, 0, 150, 0, 195, 0, 240,
+    ]);
+    expect(BUILT_IN_PATTERNS.shiver.timings.slice(1, 5)).toEqual([
+      35, 35, 35, 35,
+    ]);
+    expect(BUILT_IN_PATTERNS.rain.timings).not.toEqual(
+      BUILT_IN_PATTERNS.pendulum.timings,
+    );
+  });
+
+  it('keeps amplitudes aligned with every built-in timeline', () => {
+    for (const key of BUILT_IN_KEYS) {
+      const { timings, amplitudes } = BUILT_IN_PATTERNS[key];
+      expect(amplitudes).toHaveLength(timings.length);
+      for (const amplitude of amplitudes ?? []) {
+        expect(Number.isInteger(amplitude)).toBe(true);
+        expect(amplitude).toBeGreaterThanOrEqual(0);
+        expect(amplitude).toBeLessThanOrEqual(255);
+      }
+    }
   });
 
   it('recognizes only the supported pattern names', () => {
@@ -53,22 +75,59 @@ describe('buzz patterns', () => {
 });
 
 describe('custom patterns', () => {
-  it('builds an alternating timeline for the requested pulse count', () => {
-    const { timings, amplitudes } = buildCustomTimings(3, 200, 100);
-
-    expect(timings).toEqual([0, 200, 100, 200, 100, 200]);
-    expect(amplitudes).toEqual([0, 255, 0, 255, 0, 255]);
-  });
-
-  it('clamps the pulse count into a safe range', () => {
-    expect(buildCustomTimings(0, 100, 100).timings).toEqual([0, 100]);
-    expect(buildCustomTimings(99, 100, 100).timings).toHaveLength(
-      1 + 8 * 2 - 1,
+  it('builds a per-pulse timeline with its own length, gap and strength', () => {
+    const built = buildRhythm(
+      [
+        { lengthMs: 200, gapMs: 100, strength: 255 },
+        { lengthMs: 300, gapMs: 80, strength: 128 },
+      ],
+      1,
     );
+
+    expect(built).toEqual({
+      timings: [0, 200, 100, 300],
+      amplitudes: [0, 255, 0, 128],
+    });
   });
 
-  it('scales amplitudes without lighting up silent gaps', () => {
-    expect(scaledAmplitudes([0, 200, 0, 100], 0.5)).toEqual([0, 100, 0, 50]);
+  it('repeats the whole rhythm and drops the final gap', () => {
+    const built = buildRhythm(
+      [{ lengthMs: 100, gapMs: 50, strength: 200 }],
+      2,
+    );
+
+    expect(built).toEqual({
+      timings: [0, 100, 50, 100],
+      amplitudes: [0, 200, 0, 200],
+    });
+  });
+
+  it('clamps out-of-range steps and treats junk numbers as the minimum', () => {
+    const built = buildRhythm(
+      [{ lengthMs: 5, gapMs: 5000, strength: 999 }],
+      1,
+    );
+
+    expect(built).toEqual({
+      timings: [0, 40],
+      amplitudes: [0, 255],
+    });
+    expect(
+      buildRhythm([{ lengthMs: NaN, gapMs: NaN, strength: NaN }], 1),
+    ).toEqual({ timings: [0, 40], amplitudes: [0, 0] });
+  });
+
+  it('refuses rhythms that cannot fit into one waveform', () => {
+    const steps = Array.from({ length: MAX_RHYTHM_STEPS }, () => ({
+      lengthMs: 200,
+      gapMs: 100,
+      strength: 200,
+    }));
+
+    expect(buildRhythm(steps, 2)).not.toBeNull();
+    expect(buildRhythm(steps, 3)).toBeNull();
+    expect(buildRhythm([], 1)).toBeNull();
+    expect(buildRhythm([...steps, ...steps], 1)).toBeNull();
   });
 
   it('rejects malformed timelines from the network', () => {

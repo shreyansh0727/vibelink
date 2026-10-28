@@ -6,7 +6,7 @@ import {
   View,
 } from 'react-native';
 import { Header } from './Brand';
-import { PrimaryButton, SecondaryButton } from './Buttons';
+import { PrimaryButton, SecondaryButton, TextButton } from './Buttons';
 import { Screen } from './Screen';
 import { Text } from '../ui/Text';
 import { RoundButton } from '../ui/RoundButton';
@@ -15,34 +15,57 @@ import { playPressFeedback, playTimings } from '../lib/haptics';
 import {
   BUILT_IN_KEYS,
   BUILT_IN_PATTERNS,
-  buildCustomTimings,
-  scaledAmplitudes,
+  MAX_RHYTHM_GAP_MS,
+  MAX_RHYTHM_PULSE_MS,
+  MAX_RHYTHM_REPEAT,
+  MAX_RHYTHM_STEPS,
+  MIN_RHYTHM_GAP_MS,
+  MIN_RHYTHM_PULSE_MS,
+  buildRhythm,
+  type RhythmStep,
 } from '../lib/patterns';
 import { useThemedStyles, type AppTheme } from '../theme/ThemeProvider';
 
-const STRENGTHS = [
-  { id: 'soft', label: 'Soft', factor: 0.4 },
-  { id: 'medium', label: 'Medium', factor: 0.7 },
-  { id: 'strong', label: 'Strong', factor: 1 },
-] as const;
+const STARTING_STEPS: RhythmStep[] = [
+  { lengthMs: 180, gapMs: 120, strength: 178 },
+  { lengthMs: 180, gapMs: 120, strength: 178 },
+  { lengthMs: 180, gapMs: 120, strength: 178 },
+];
 
-type StrengthId = (typeof STRENGTHS)[number]['id'];
-
-function glyphBars(timings: number[]): number[] {
-  const bars: number[] = [];
+function glyphBars(
+  timings: number[],
+  amplitudes?: number[],
+): Array<{ height: number; strength: number }> {
+  const bars: Array<{ height: number; strength: number }> = [];
   for (let index = 1; index < timings.length && bars.length < 7; index += 2) {
     const duration = timings[index] ?? 0;
-    bars.push(Math.max(6, Math.min(20, 6 + duration / 45)));
+    const amplitude = amplitudes?.[index] ?? 200;
+    bars.push({
+      height: Math.max(6, Math.min(20, 6 + duration / 45)),
+      strength: Math.max(0.35, Math.min(1, amplitude / 255)),
+    });
   }
-  return bars.length ? bars : [10];
+  return bars.length ? bars : [{ height: 10, strength: 1 }];
 }
 
-function WaveGlyph({ timings }: { timings: number[] }) {
+function WaveGlyph({
+  timings,
+  amplitudes,
+}: {
+  timings: number[];
+  amplitudes?: number[];
+}) {
   const { styles } = useThemedStyles(makeStyles);
   return (
     <View style={styles.glyph}>
-      {glyphBars(timings).map((height, index) => (
-        <View key={index} style={[styles.glyphBar, { height }]} />
+      {glyphBars(timings, amplitudes).map((bar, index) => (
+        <View
+          key={index}
+          style={[
+            styles.glyphBar,
+            { height: bar.height, opacity: bar.strength },
+          ]}
+        />
       ))}
     </View>
   );
@@ -64,7 +87,7 @@ function PatternRow({
   const { styles } = useThemedStyles(makeStyles);
   return (
     <View style={styles.row}>
-      <WaveGlyph timings={timings} />
+      <WaveGlyph amplitudes={amplitudes} timings={timings} />
       <View style={styles.rowCopy}>
         <Text style={styles.rowLabel}>{label}</Text>
         <Text style={styles.rowDescription} numberOfLines={2}>
@@ -168,66 +191,60 @@ function Stepper({
   );
 }
 
-function ChoiceChip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  const { styles } = useThemedStyles(makeStyles);
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ selected: active }}
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.chip,
-        active ? styles.chipActive : null,
-        pressed ? styles.ghostPressed : null,
-      ]}
-    >
-      <Text style={[styles.chipLabel, active ? styles.chipLabelActive : null]}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
 export function HapticsScreen({ onBack }: { onBack: () => void }) {
   const { styles, colors } = useThemedStyles(makeStyles);
   const { patterns, addPattern, removePattern } = useCustomPatterns();
   const [name, setName] = useState('');
-  const [pulses, setPulses] = useState(3);
-  const [pulseMs, setPulseMs] = useState(180);
-  const [gapMs, setGapMs] = useState(120);
-  const [strength, setStrength] = useState<StrengthId>('medium');
+  const [steps, setSteps] = useState<RhythmStep[]>(STARTING_STEPS);
+  const [repeat, setRepeat] = useState(1);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
 
-  const strengthFactor = useMemo(
-    () => STRENGTHS.find(option => option.id === strength)?.factor ?? 0.7,
-    [strength],
+  const draft = useMemo(() => buildRhythm(steps, repeat), [steps, repeat]);
+  const totalMs = useMemo(
+    () => (draft ? draft.timings.reduce((sum, ms) => sum + ms, 0) : 0),
+    [draft],
   );
+  const pulseCount = steps.length * repeat;
 
-  const draft = useMemo(
-    () => buildCustomTimings(pulses, pulseMs, gapMs),
-    [pulses, pulseMs, gapMs],
-  );
-  const draftAmplitudes = useMemo(
-    () => scaledAmplitudes(draft.amplitudes, strengthFactor),
-    [draft, strengthFactor],
-  );
+  const updateStep = (index: number, patch: Partial<RhythmStep>) => {
+    setSteps(current =>
+      current.map((step, position) =>
+        position === index ? { ...step, ...patch } : step,
+      ),
+    );
+  };
+
+  const addStep = () => {
+    playPressFeedback();
+    setSteps(current =>
+      current.length >= MAX_RHYTHM_STEPS
+        ? current
+        : [...current, current[current.length - 1]],
+    );
+  };
+
+  const removeStep = (index: number) => {
+    playPressFeedback();
+    setSteps(current =>
+      current.length <= 1
+        ? current
+        : current.filter((_, position) => position !== index),
+    );
+  };
 
   const preview = () => {
+    if (!draft) {
+      return;
+    }
     playPressFeedback();
-    playTimings(draft.timings, draftAmplitudes);
+    playTimings(draft.timings, draft.amplitudes);
   };
 
   const save = () => {
-    const created = addPattern(name, draft.timings, draftAmplitudes);
+    if (!draft) {
+      return;
+    }
+    const created = addPattern(name, draft.timings, draft.amplitudes);
     setSavedLabel(created.label);
     setName('');
     playTimings(created.timings, created.amplitudes);
@@ -250,8 +267,8 @@ export function HapticsScreen({ onBack }: { onBack: () => void }) {
         <Text style={styles.eyebrow}>HAPTIC LAB</Text>
         <Text style={styles.title}>Feel it before{'\n'}you send it.</Text>
         <Text style={styles.body}>
-          Preview every built-in pulse without pairing. Build your own rhythm
-          and it becomes available on the controller.
+          Preview every built-in pulse without pairing. Shape each pulse in a
+          rhythm and it becomes available on the controller.
         </Text>
       </View>
 
@@ -306,7 +323,7 @@ export function HapticsScreen({ onBack }: { onBack: () => void }) {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionLabel}>BUILD A CUSTOM FEEL</Text>
+        <Text style={styles.sectionLabel}>BUILD A CUSTOM RHYTHM</Text>
         <View style={styles.card}>
           <View style={styles.field}>
             <Text style={styles.fieldLabel}>NAME</Text>
@@ -325,58 +342,99 @@ export function HapticsScreen({ onBack }: { onBack: () => void }) {
             />
           </View>
 
+          <View style={styles.stepList}>
+            <View style={styles.stepListHeader}>
+              <Text style={styles.fieldLabel}>PULSE SHAPE</Text>
+              <TextButton
+                disabled={steps.length >= MAX_RHYTHM_STEPS}
+                label="+ Add pulse"
+                onPress={addStep}
+              />
+            </View>
+
+            {steps.map((step, index) => (
+              <View key={index} style={styles.stepCard}>
+                <View style={styles.stepCardHeader}>
+                  <Text style={styles.stepCardTitle}>PULSE {index + 1}</Text>
+                  {steps.length > 1 ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove pulse ${index + 1}`}
+                      hitSlop={8}
+                      onPress={() => removeStep(index)}
+                      style={({ pressed }) => [
+                        styles.removeButton,
+                        pressed ? styles.ghostPressed : null,
+                      ]}
+                    >
+                      <Text style={styles.removeText}>REMOVE</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                <Stepper
+                  label="Length"
+                  max={MAX_RHYTHM_PULSE_MS}
+                  min={MIN_RHYTHM_PULSE_MS}
+                  onChange={value => updateStep(index, { lengthMs: value })}
+                  step={20}
+                  suffix=" ms"
+                  value={step.lengthMs}
+                />
+                <Stepper
+                  label="Gap after"
+                  max={MAX_RHYTHM_GAP_MS}
+                  min={MIN_RHYTHM_GAP_MS}
+                  onChange={value => updateStep(index, { gapMs: value })}
+                  step={10}
+                  suffix=" ms"
+                  value={step.gapMs}
+                />
+                <Stepper
+                  label="Strength"
+                  max={100}
+                  min={0}
+                  onChange={value =>
+                    updateStep(index, { strength: Math.round(value * 2.55) })
+                  }
+                  step={10}
+                  suffix="%"
+                  value={Math.round((step.strength / 255) * 100)}
+                />
+              </View>
+            ))}
+          </View>
+
           <Stepper
-            label="Pulses"
-            max={8}
+            label="Repeat rhythm"
+            max={MAX_RHYTHM_REPEAT}
             min={1}
-            onChange={setPulses}
+            onChange={setRepeat}
             step={1}
             suffix="×"
-            value={pulses}
-          />
-          <Stepper
-            label="Pulse length"
-            max={600}
-            min={40}
-            onChange={setPulseMs}
-            step={20}
-            suffix=" ms"
-            value={pulseMs}
-          />
-          <Stepper
-            label="Space between"
-            max={800}
-            min={30}
-            onChange={setGapMs}
-            step={10}
-            suffix=" ms"
-            value={gapMs}
+            value={repeat}
           />
 
-          <View style={styles.field}>
-            <Text style={styles.fieldLabel}>STRENGTH</Text>
-            <View style={styles.chipRow}>
-              {STRENGTHS.map(option => (
-                <ChoiceChip
-                  active={strength === option.id}
-                  key={option.id}
-                  label={option.label}
-                  onPress={() => {
-                    playPressFeedback();
-                    setStrength(option.id);
-                  }}
-                />
-              ))}
-            </View>
-          </View>
+          {draft ? (
+            <Text style={styles.rhythmSummary}>
+              {pulseCount} {pulseCount === 1 ? 'pulse' : 'pulses'} ·{' '}
+              {(totalMs / 1000).toFixed(1)} s
+            </Text>
+          ) : (
+            <Text style={styles.rhythmWarning}>
+              That is too many pulses for one feel. Remove a pulse or lower the
+              repeat.
+            </Text>
+          )}
 
           <View style={styles.previewRow}>
             <SecondaryButton
+              disabled={!draft}
               label="Preview"
               onPress={preview}
               style={styles.previewButton}
             />
             <PrimaryButton
+              disabled={!draft}
               label="Save pattern"
               onPress={save}
               style={styles.previewButton}
@@ -571,31 +629,46 @@ const makeStyles = ({ colors, radii, spacing, type, fontScale }: AppTheme) =>
       fontSize: 18,
       lineHeight: 21,
     },
-    chipRow: {
-      flexDirection: 'row',
-      gap: 8,
+    stepList: {
+      marginTop: 14,
+      gap: 10,
     },
-    chip: {
-      flex: 1,
-      minHeight: 40,
+    stepListHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    stepCard: {
       borderRadius: radii.small,
       borderWidth: 1,
       borderColor: colors.line,
       backgroundColor: colors.surfaceRaised,
+      paddingHorizontal: 12,
+      paddingBottom: 14,
+    },
+    stepCardHeader: {
+      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'center',
+      justifyContent: 'space-between',
+      paddingTop: 12,
     },
-    chipActive: {
-      borderColor: colors.accentLine,
-      backgroundColor: colors.accentWash,
-    },
-    chipLabel: {
-      ...type.label,
-      fontSize: 12,
-      color: colors.textMuted,
-    },
-    chipLabelActive: {
+    stepCardTitle: {
+      ...type.eyebrow,
+      fontSize: 9,
+      letterSpacing: 1.4,
       color: colors.accent,
+    },
+    rhythmSummary: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontFamily: 'monospace',
+      paddingTop: 14,
+    },
+    rhythmWarning: {
+      color: colors.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      paddingTop: 14,
     },
     previewRow: {
       flexDirection: 'row',

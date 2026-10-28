@@ -55,22 +55,32 @@ function parseList(value: unknown): unknown {
   }
 }
 
-export function vibrateBuzz(payload: BuzzPayload | string | undefined): void {
+export function buzzWaveform(
+  payload: BuzzPayload | string | undefined,
+): { timings: number[]; amplitudes?: number[] } {
   if (payload === undefined || typeof payload === 'string') {
-    playHaptic(payload);
-    return;
+    const definition = patternFor(payload);
+    return { timings: definition.timings, amplitudes: definition.amplitudes };
   }
 
   const timings = sanitizeTimings(parseList(payload.timings));
   if (timings) {
-    playTimings(
+    return {
       timings,
-      sanitizeAmplitudes(parseList(payload.amplitudes), timings.length),
-    );
-    return;
+      amplitudes: sanitizeAmplitudes(
+        parseList(payload.amplitudes),
+        timings.length,
+      ),
+    };
   }
 
-  playHaptic(payload.pattern);
+  const definition = patternFor(payload.pattern);
+  return { timings: definition.timings, amplitudes: definition.amplitudes };
+}
+
+export function vibrateBuzz(payload: BuzzPayload | string | undefined): void {
+  const { timings, amplitudes } = buzzWaveform(payload);
+  playTimings(timings, amplitudes);
 }
 
 export function playPressFeedback(): void {

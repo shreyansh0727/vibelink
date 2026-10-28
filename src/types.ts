@@ -1,9 +1,16 @@
 export type BuiltInPatternId =
   | 'tap'
   | 'double'
+  | 'snap'
+  | 'knock'
   | 'wave'
   | 'heartbeat'
+  | 'pendulum'
   | 'ripple'
+  | 'crescendo'
+  | 'rain'
+  | 'sonar'
+  | 'shiver'
   | 'sos'
   | 'long';
 
@@ -40,6 +47,16 @@ export type IncomingPulse = {
 
 export type CustomPattern = {
   id: string;
+  label: string;
+  timings: number[];
+  amplitudes: number[];
+  createdAt: number;
+};
+
+export type SharedRhythm = {
+  id: string;
+  from: string;
+  fromName: string;
   label: string;
   timings: number[];
   amplitudes: number[];

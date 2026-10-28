@@ -9,27 +9,31 @@ import {
 import { getDatabase, push, ref, set } from '@react-native-firebase/database';
 import { BackgroundAccessCard } from './BackgroundAccessCard';
 import { Header } from './Brand';
+import { MeaningEditor } from './MeaningEditor';
 import { PulseButton } from './PulseButton';
 import { RoundButton } from '../ui/RoundButton';
 import { Screen } from './Screen';
 import { Text } from '../ui/Text';
 import { useCustomPatterns } from '../hooks/useCustomPatterns';
+import { usePairLegend } from '../hooks/usePairLegend';
 import { usePrivacy } from '../hooks/usePrivacy';
+import { useSharedRhythms } from '../hooks/useSharedRhythms';
 import { describePairError, isNetworkError } from '../lib/errors';
 import { playPressFeedback } from '../lib/haptics';
+import { effectiveMeaning, sameRhythm } from '../lib/language';
 import {
   BUILT_IN_KEYS,
   BUILT_IN_PATTERNS,
   DEFAULT_BUZZ_PATTERN,
 } from '../lib/patterns';
 import { useThemedStyles, type AppTheme } from '../theme/ThemeProvider';
-import type { PairMember } from '../types';
+import type { PairMember, SharedRhythm } from '../types';
 
 type ControllerScreenProps = {
   pairId: string;
   uid: string;
   selfName: string;
-  partner: PairMember;
+  peers: PairMember[];
   onLeave: () => Promise<void>;
   onOpenSettings: () => void;
   onOpenHaptics: () => void;
@@ -42,7 +46,8 @@ type SentPulse = {
 };
 
 const PENDING_STATUS_MS = 12_000;
-const DELIVERED_STATUS_MS = 4_000;
+const DELIVERED_STATUS_MS = 6_000;
+const TORCH_NOTICE_MS = 5_000;
 
 type PatternOption = {
   id: string;
@@ -91,13 +96,15 @@ export function ControllerScreen({
   pairId,
   uid,
   selfName,
-  partner,
+  peers,
   onLeave,
   onOpenSettings,
   onOpenHaptics,
 }: ControllerScreenProps) {
   const { styles, colors } = useThemedStyles(makeStyles);
-  const { patterns } = useCustomPatterns();
+  const { patterns, addPattern } = useCustomPatterns();
+  const { meanings, saveMeaning } = usePairLegend(pairId);
+  const { shares, dismiss } = useSharedRhythms(pairId, uid);
   const { state: privacyState } = usePrivacy();
   const options = useMemo<PatternOption[]>(() => {
     const builtIns = BUILT_IN_KEYS.map(key => ({
@@ -124,12 +131,28 @@ export function ControllerScreen({
   const [sendError, setSendError] = useState<string | null>(null);
   const [lastSent, setLastSent] = useState<SentPulse | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [sendingTorch, setSendingTorch] = useState(false);
+  const [editingMeaning, setEditingMeaning] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const [torchNotice, setTorchNotice] = useState<{
+    text: string;
+    at: number;
+  } | null>(null);
 
   const selected =
     options.find(option => option.id === selectedId) ?? options[0];
+  const meaning = selected.custom
+    ? ''
+    : effectiveMeaning(selected.id, meanings);
 
+  const deliveredCount = lastSent
+    ? peers.filter(peer => peer.lastDeliveredTrigger === lastSent.triggerId)
+        .length
+    : 0;
   const delivered =
-    lastSent !== null && partner.lastDeliveredTrigger === lastSent.triggerId;
+    lastSent !== null && peers.length > 0 && deliveredCount === peers.length;
+  const singlePeer = peers.length === 1 ? peers[0] : null;
 
   useEffect(() => {
     if (!lastSent) {
@@ -145,6 +168,20 @@ export function ControllerScreen({
       clearTimeout(timer);
     };
   }, [lastSent, delivered]);
+
+  useEffect(() => {
+    if (!torchNotice) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      setTorchNotice(current =>
+        current?.at === torchNotice.at ? null : current,
+      );
+    }, TORCH_NOTICE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [torchNotice]);
 
   const handleSend = async () => {
     if (sending) {
@@ -165,6 +202,8 @@ export function ControllerScreen({
       trigger.timings = selected.timings;
       trigger.amplitudes = selected.amplitudes ?? [];
       trigger.patternLabel = selected.label;
+    } else if (meaning) {
+      trigger.meaning = meaning;
     }
 
     try {
@@ -190,6 +229,90 @@ export function ControllerScreen({
     }
   };
 
+  const handleTorch = async (on: boolean) => {
+    if (sendingTorch) {
+      return;
+    }
+    playPressFeedback();
+    setSendingTorch(true);
+    try {
+      const commandRef = push(
+        ref(getDatabase(), `pairs/${pairId}/controls`),
+      );
+      await set(commandRef, {
+        from: uid,
+        fromName: selfName,
+        kind: 'torch',
+        torch: on,
+        createdAt: Date.now(),
+      });
+      setTorchNotice({
+        text: on
+          ? 'Light request sent. It switches itself off after five minutes.'
+          : 'Off request sent.',
+        at: Date.now(),
+      });
+    } catch {
+      setTorchNotice({
+        text: 'The flashlight request could not be sent.',
+        at: Date.now(),
+      });
+    } finally {
+      setSendingTorch(false);
+    }
+  };
+
+  const handleSaveMeaning = async (text: string) => {
+    setEditingMeaning(false);
+    try {
+      await saveMeaning(selected.id, text);
+    } catch {
+      Alert.alert(
+        'Could not save the meaning',
+        'The new meaning did not reach the other phones. Check your connection and try again.',
+      );
+    }
+  };
+
+  const handleShare = async () => {
+    if (sharing || !selected.custom) {
+      return;
+    }
+    playPressFeedback();
+    setSharing(true);
+    setShareNotice(null);
+    try {
+      const shareRef = push(ref(getDatabase(), `pairs/${pairId}/shared`));
+      await set(shareRef, {
+        from: uid,
+        fromName: selfName,
+        label: selected.label.slice(0, 24),
+        timings: selected.timings,
+        amplitudes: selected.amplitudes ?? [],
+        createdAt: Date.now(),
+      });
+      setShareNotice('Shared with the link.');
+    } catch {
+      setShareNotice('Could not share this feel.');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const handleSaveShare = (share: SharedRhythm) => {
+    playPressFeedback();
+    addPattern(share.label, share.timings, share.amplitudes);
+  };
+
+  const handleDismissShare = (shareId: string) => {
+    dismiss(shareId).catch(() => {
+      Alert.alert(
+        'Could not remove the shared feel',
+        'Check your connection and try again.',
+      );
+    });
+  };
+
   const handleLeave = async () => {
     setLeaving(true);
     try {
@@ -208,7 +331,9 @@ export function ControllerScreen({
   const confirmLeave = () => {
     Alert.alert(
       'Unlink this phone?',
-      `You will stop sending and receiving pulses with ${partner.name}.`,
+      `You will stop sending and receiving pulses with ${
+        singlePeer ? singlePeer.name : 'the linked phones'
+      }.`,
       [
         { text: 'Keep link', style: 'cancel' },
         {
@@ -235,10 +360,11 @@ export function ControllerScreen({
     statusText = sendError;
     statusColor = colors.coral;
   } else if (lastSent) {
-    statusText = delivered
-      ? `${lastSent.label} pulse delivered`
-      : `${lastSent.label} pulse sent`;
-    statusColor = delivered ? colors.green : colors.accent;
+    statusText =
+      deliveredCount > 0
+        ? `${lastSent.label} pulse delivered to ${deliveredCount} of ${peers.length}`
+        : `${lastSent.label} pulse sent`;
+    statusColor = deliveredCount > 0 ? colors.green : colors.accent;
   }
 
   return (
@@ -263,17 +389,25 @@ export function ControllerScreen({
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>SEND A PULSE TO</Text>
         <Text style={styles.partnerName} numberOfLines={2}>
-          {partner.name}
+          {singlePeer ? singlePeer.name : `${peers.length} linked phones`}
         </Text>
         <View style={styles.presenceRow}>
           <View
             style={[
               styles.presenceDot,
-              partner.online ? styles.presenceOnline : styles.presenceIdle,
+              peers.some(peer => peer.online)
+                ? styles.presenceOnline
+                : styles.presenceIdle,
             ]}
           />
           <Text style={styles.presenceText}>
-            {partner.online ? 'Active on the link' : 'Ready in the background'}
+            {singlePeer
+              ? singlePeer.online
+                ? 'Active on the link'
+                : 'Ready in the background'
+              : `${
+                  peers.filter(peer => peer.online).length
+                } of ${peers.length} linked phones active`}
           </Text>
           <View style={styles.presenceDivider} />
           <Text style={styles.presenceMeta}>
@@ -286,7 +420,7 @@ export function ControllerScreen({
         <PulseButton
           disabled={sending}
           onPress={handleSend}
-          partnerName={partner.name}
+          partnerName={singlePeer ? singlePeer.name : 'every linked phone'}
           patternLabel={selected.label}
         />
       </View>
@@ -325,6 +459,7 @@ export function ControllerScreen({
                   playPressFeedback();
                   setSelectedId(option.id);
                   setSendError(null);
+                  setShareNotice(null);
                 }}
                 style={({ pressed }) => [
                   styles.patternChip,
@@ -349,7 +484,109 @@ export function ControllerScreen({
             );
           })}
         </ScrollView>
+        <View style={styles.meaningRow}>
+          <Text numberOfLines={2} style={styles.meaningText}>
+            {selected.custom
+              ? shareNotice ??
+                'Share this rhythm so the other phones can save it.'
+              : `${selected.label} means “${meaning}”`}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              selected.custom
+                ? `Share ${selected.label} with the link`
+                : `Edit what ${selected.label} means`
+            }
+            accessibilityState={{ disabled: sharing }}
+            disabled={sharing}
+            hitSlop={8}
+            onPress={() => {
+              if (selected.custom) {
+                handleShare().catch(() => {});
+              } else {
+                playPressFeedback();
+                setEditingMeaning(true);
+              }
+            }}
+            style={({ pressed }) => [
+              styles.meaningActionButton,
+              pressed ? styles.meaningPressed : null,
+            ]}
+          >
+            <Text style={styles.meaningAction}>
+              {selected.custom ? (sharing ? 'Sharing…' : 'Share') : 'Edit meaning'}
+            </Text>
+          </Pressable>
+        </View>
       </View>
+
+      {shares.length > 0 ? (
+        <View style={styles.shareCard}>
+          <Text style={styles.sectionLabel}>FROM THE LINK</Text>
+          {shares.map(share => {
+            const saved = patterns.some(pattern => sameRhythm(pattern, share));
+            const pulseCount = Math.max(
+              1,
+              Math.floor(share.timings.length / 2),
+            );
+            return (
+              <View key={share.id} style={styles.shareRow}>
+                <View style={styles.shareCopy}>
+                  <Text numberOfLines={1} style={styles.shareLabel}>
+                    {share.label}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.shareMeta}>
+                    {share.fromName} · {pulseCount}{' '}
+                    {pulseCount === 1 ? 'pulse' : 'pulses'}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    saved
+                      ? `${share.label} is already saved`
+                      : `Save ${share.label} to your feels`
+                  }
+                  accessibilityState={{ disabled: saved }}
+                  disabled={saved}
+                  onPress={() => {
+                    handleSaveShare(share);
+                  }}
+                  style={({ pressed }) => [
+                    styles.shareAction,
+                    saved ? styles.shareActionSaved : null,
+                    pressed ? styles.meaningPressed : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.shareActionText,
+                      saved ? styles.shareActionTextSaved : null,
+                    ]}
+                  >
+                    {saved ? 'Saved' : 'Save'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove shared feel ${share.label}`}
+                  hitSlop={8}
+                  onPress={() => {
+                    handleDismissShare(share.id);
+                  }}
+                  style={({ pressed }) => [
+                    styles.shareDismiss,
+                    pressed ? styles.meaningPressed : null,
+                  ]}
+                >
+                  <Text style={styles.shareDismissText}>✕</Text>
+                </Pressable>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
 
       <View style={styles.infoCard}>
         <View style={styles.infoIcon}>
@@ -360,9 +597,50 @@ export function ControllerScreen({
         <View style={styles.infoCopy}>
           <Text style={styles.infoTitle}>Quiet by design</Text>
           <Text style={styles.infoBody}>
-            Their phone only vibrates. Nothing appears in the notification
-            shade.
+            Their phone buzzes or lights up. Nothing appears in the
+            notification shade.
           </Text>
+        </View>
+      </View>
+
+      <View style={styles.torchCard}>
+        <View style={styles.torchCopy}>
+          <Text style={styles.torchTitle}>Their flashlight</Text>
+          <Text style={styles.torchBody}>
+            {torchNotice?.text ??
+              'Light up a linked phone for five minutes, or switch its torch off.'}
+          </Text>
+        </View>
+        <View style={styles.torchActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Turn on the linked phones' flashlights"
+            disabled={sendingTorch}
+            onPress={() => {
+              handleTorch(true).catch(() => {});
+            }}
+            style={({ pressed }) => [
+              styles.torchAction,
+              styles.torchActionOn,
+              pressed ? styles.torchActionPressed : null,
+            ]}
+          >
+            <Text style={styles.torchActionTextOn}>ON</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Turn off the linked phones' flashlights"
+            disabled={sendingTorch}
+            onPress={() => {
+              handleTorch(false).catch(() => {});
+            }}
+            style={({ pressed }) => [
+              styles.torchAction,
+              pressed ? styles.torchActionPressed : null,
+            ]}
+          >
+            <Text style={styles.torchActionText}>OFF</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -383,6 +661,14 @@ export function ControllerScreen({
           {leaving ? 'Unlinking…' : 'Unlink this phone'}
         </Text>
       </Pressable>
+
+      <MeaningEditor
+        initialValue={meaning}
+        onCancel={() => setEditingMeaning(false)}
+        onSave={handleSaveMeaning}
+        patternLabel={selected.label}
+        visible={editingMeaning}
+      />
     </Screen>
   );
 }
@@ -527,6 +813,92 @@ const makeStyles = ({ colors, radii, spacing, type }: AppTheme) =>
       width: 3,
       borderRadius: 2,
     },
+    meaningRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 2,
+    },
+    meaningText: {
+      flex: 1,
+      color: colors.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    meaningActionButton: {
+      minHeight: 32,
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+    },
+    meaningAction: {
+      ...type.eyebrow,
+      fontSize: 9,
+      letterSpacing: 1.2,
+      color: colors.accent,
+    },
+    meaningPressed: {
+      opacity: 0.6,
+    },
+    shareCard: {
+      gap: 10,
+      marginTop: spacing.small,
+      padding: 14,
+      borderRadius: radii.medium,
+      borderWidth: 1,
+      borderColor: colors.accentLine,
+      backgroundColor: colors.accentWash,
+    },
+    shareRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    shareCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    shareLabel: {
+      ...type.label,
+      color: colors.text,
+    },
+    shareMeta: {
+      color: colors.textMuted,
+      fontSize: 11,
+    },
+    shareAction: {
+      minWidth: 62,
+      minHeight: 34,
+      paddingHorizontal: 10,
+      borderRadius: radii.small,
+      borderWidth: 1,
+      borderColor: colors.accentLine,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    shareActionSaved: {
+      borderColor: colors.line,
+      backgroundColor: 'transparent',
+    },
+    shareActionText: {
+      ...type.eyebrow,
+      fontSize: 9,
+      letterSpacing: 1.2,
+      color: colors.accent,
+    },
+    shareActionTextSaved: {
+      color: colors.textFaint,
+    },
+    shareDismiss: {
+      width: 30,
+      height: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    shareDismissText: {
+      color: colors.textFaint,
+      fontSize: 13,
+    },
     infoCard: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -580,6 +952,64 @@ const makeStyles = ({ colors, radii, spacing, type }: AppTheme) =>
       color: colors.textMuted,
       fontSize: 12,
       lineHeight: 17,
+    },
+    torchCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginTop: spacing.small,
+      padding: 14,
+      borderRadius: radii.medium,
+      borderWidth: 1,
+      borderColor: colors.line,
+      backgroundColor: colors.surface,
+    },
+    torchCopy: {
+      flex: 1,
+      gap: 3,
+    },
+    torchTitle: {
+      ...type.label,
+      color: colors.text,
+    },
+    torchBody: {
+      color: colors.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+    torchActions: {
+      flexDirection: 'row',
+      gap: 6,
+    },
+    torchAction: {
+      minWidth: 46,
+      minHeight: 38,
+      paddingHorizontal: 10,
+      borderRadius: radii.small,
+      borderWidth: 1,
+      borderColor: colors.lineStrong,
+      backgroundColor: colors.surfaceRaised,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    torchActionOn: {
+      borderColor: colors.accentLine,
+      backgroundColor: colors.accentWash,
+    },
+    torchActionPressed: {
+      opacity: 0.65,
+    },
+    torchActionText: {
+      ...type.eyebrow,
+      fontSize: 9,
+      letterSpacing: 1.2,
+      color: colors.textMuted,
+    },
+    torchActionTextOn: {
+      ...type.eyebrow,
+      fontSize: 9,
+      letterSpacing: 1.2,
+      color: colors.accent,
     },
     unlinkButton: {
       minHeight: 46,
